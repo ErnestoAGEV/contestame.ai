@@ -1,5 +1,13 @@
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export function buildHangupTwiml(message: string): string {
-  return `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="es-MX">${message}</Say><Hangup/></Response>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><Response><Say language="es-MX">${escapeXml(message)}</Say><Hangup/></Response>`;
 }
 
 export async function hangupWithMessage(callSid: string, message: string): Promise<void> {
