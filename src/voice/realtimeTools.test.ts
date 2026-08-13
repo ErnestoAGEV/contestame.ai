@@ -29,6 +29,24 @@ describe('realtimeTools', () => {
       expect(result.ok).toBe(false);
       expect(session.items).toEqual([]);
     });
+
+    it('rejects a negative quantity', () => {
+      const result = addItem(session, { name: 'Taco de asada', quantity: -1 });
+      expect(result.ok).toBe(false);
+      expect(session.items).toEqual([]);
+    });
+
+    it('rejects a zero quantity', () => {
+      const result = addItem(session, { name: 'Taco de asada', quantity: 0 });
+      expect(result.ok).toBe(false);
+      expect(session.items).toEqual([]);
+    });
+
+    it('rejects a non-integer quantity', () => {
+      const result = addItem(session, { name: 'Taco de asada', quantity: 1.5 });
+      expect(result.ok).toBe(false);
+      expect(session.items).toEqual([]);
+    });
   });
 
   describe('removeItem', () => {
@@ -42,6 +60,21 @@ describe('realtimeTools', () => {
     it('reports failure when item is not in the order', () => {
       const result = removeItem(session, { name: 'Taco de asada' });
       expect(result.ok).toBe(false);
+    });
+
+    it('removes an item via a substring match against the cart when unambiguous', () => {
+      addItem(session, { name: 'Taco de asada', quantity: 1 });
+      const result = removeItem(session, { name: 'taco' });
+      expect(result.ok).toBe(true);
+      expect(session.items).toEqual([]);
+    });
+
+    it('reports failure when a substring match against the cart is ambiguous', () => {
+      addItem(session, { name: 'Taco de asada', quantity: 1 });
+      addItem(session, { name: 'Quesadilla de asada', quantity: 1 });
+      const result = removeItem(session, { name: 'asada' });
+      expect(result.ok).toBe(false);
+      expect(session.items.length).toBe(2);
     });
   });
 

@@ -11,6 +11,9 @@ export function addItem(
   session: CallSession,
   args: { name: string; quantity: number; notes?: string }
 ): ToolResult {
+  if (!Number.isInteger(args.quantity) || args.quantity <= 0) {
+    return { ok: false, reason: 'la cantidad debe ser un número entero positivo' };
+  }
   const menuItem = findMenuItem(args.name);
   if (!menuItem) {
     return { ok: false, reason: `"${args.name}" no está en el menú` };
@@ -20,12 +23,25 @@ export function addItem(
 }
 
 export function removeItem(session: CallSession, args: { name: string }): ToolResult {
-  const index = session.items.findIndex(
-    (item) => item.name.toLowerCase() === args.name.toLowerCase()
+  const normalizedArg = args.name.toLowerCase();
+
+  const exactIndex = session.items.findIndex(
+    (item) => item.name.toLowerCase() === normalizedArg
   );
-  if (index === -1) {
+  if (exactIndex !== -1) {
+    session.items.splice(exactIndex, 1);
+    return { ok: true };
+  }
+
+  const candidates = session.items.filter(
+    (item) =>
+      item.name.toLowerCase().includes(normalizedArg) ||
+      normalizedArg.includes(item.name.toLowerCase())
+  );
+  if (candidates.length !== 1) {
     return { ok: false, reason: `"${args.name}" no estaba en el pedido` };
   }
+  const index = session.items.indexOf(candidates[0]);
   session.items.splice(index, 1);
   return { ok: true };
 }
