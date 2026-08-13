@@ -202,7 +202,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     env: {
-      DATABASE_URL: 'file:./prisma/test.db',
+      DATABASE_URL: 'file:./test.db',
     },
   },
 });
@@ -216,7 +216,7 @@ import { execSync } from 'node:child_process';
 
 execSync('npx prisma db push --skip-generate', {
   stdio: 'inherit',
-  env: { ...process.env, DATABASE_URL: 'file:./prisma/test.db' },
+  env: { ...process.env, DATABASE_URL: 'file:./test.db' },
 });
 ```
 

@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     env: {
-      DATABASE_URL: 'file:./prisma/test.db',
+      DATABASE_URL: 'file:./test.db',
     },
   },
 });
