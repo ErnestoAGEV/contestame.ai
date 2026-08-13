@@ -1,4 +1,4 @@
-import type { OrderStatus } from '@prisma/client';
+import { OrderStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import type { CallSession } from '../voice/callSession.js';
 
@@ -10,10 +10,14 @@ export async function listOrders() {
 }
 
 export async function createOrderFromSession(session: CallSession) {
+  if (!session.type) {
+    throw new Error('createOrderFromSession: session.type must be set (call validateFinalize first)');
+  }
+
   return prisma.order.create({
     data: {
       customerName: session.customerName,
-      type: session.type!,
+      type: session.type,
       address: session.address,
       items: {
         create: session.items.map((item) => ({
@@ -27,7 +31,7 @@ export async function createOrderFromSession(session: CallSession) {
   });
 }
 
-const VALID_STATUSES: OrderStatus[] = ['recibido', 'preparando', 'listo', 'completado'];
+const VALID_STATUSES = Object.values(OrderStatus);
 
 export function isValidStatus(status: string): status is OrderStatus {
   return (VALID_STATUSES as string[]).includes(status);

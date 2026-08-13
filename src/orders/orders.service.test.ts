@@ -37,6 +37,13 @@ describe('createOrderFromSession + listOrders', () => {
     expect(all[0].address).toBe('Av. Reforma 123');
   });
 
+  it('throws when session.type was never set', async () => {
+    const session = createSession('CA-order-no-type');
+    addItem(session, { name: 'Taco de asada', quantity: 1 });
+
+    await expect(createOrderFromSession(session)).rejects.toThrow();
+  });
+
   it('lists most recent orders first', async () => {
     const first = createSession('CA-order-1');
     addItem(first, { name: 'Taco de asada', quantity: 1 });
