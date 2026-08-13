@@ -15,7 +15,7 @@ declare module 'fastify' {
 
 async function socketPluginImpl(fastify: FastifyInstance) {
   const io = new SocketIOServer(fastify.server, {
-    cors: { origin: '*' },
+    cors: { origin: process.env.DASHBOARD_ORIGIN ?? '*' },
   });
 
   fastify.decorate('io', io);
@@ -26,9 +26,8 @@ async function socketPluginImpl(fastify: FastifyInstance) {
     io.emit('order:updated', order);
   });
 
-  fastify.addHook('onClose', (_instance, done) => {
-    io.close();
-    done();
+  fastify.addHook('onClose', async () => {
+    await io.close();
   });
 }
 
