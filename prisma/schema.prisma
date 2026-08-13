@@ -1,0 +1,39 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum OrderType {
+  pickup
+  delivery
+}
+
+enum OrderStatus {
+  recibido
+  preparando
+  listo
+  completado
+}
+
+model Order {
+  id           Int         @id @default(autoincrement())
+  customerName String?
+  type         OrderType
+  address      String?
+  status       OrderStatus @default(recibido)
+  createdAt    DateTime    @default(now())
+  items        OrderItem[]
+}
+
+model OrderItem {
+  id       Int     @id @default(autoincrement())
+  orderId  Int
+  order    Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  name     String
+  quantity Int
+  notes    String?
+}
