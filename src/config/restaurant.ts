@@ -21,13 +21,17 @@ export const MENU: MenuItem[] = [
 
 export function findMenuItem(name: string): MenuItem | undefined {
   const normalized = name.trim().toLowerCase();
+  if (!normalized) return undefined;
+
   const exact = MENU.find((item) => item.name.toLowerCase() === normalized);
   if (exact) return exact;
-  return MENU.find(
+
+  const candidates = MENU.filter(
     (item) =>
       item.name.toLowerCase().includes(normalized) ||
       normalized.includes(item.name.toLowerCase())
   );
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 export function buildSystemPrompt(): string {
