@@ -75,4 +75,15 @@ describe('PATCH /api/orders/:id/status', () => {
     expect(response.statusCode).toBe(404);
     await app.close();
   });
+
+  it('returns 400 for a non-numeric id', async () => {
+    const app = await buildTestServer();
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/api/orders/abc/status',
+      payload: { status: 'preparando' },
+    });
+    expect(response.statusCode).toBe(400);
+    await app.close();
+  });
 });

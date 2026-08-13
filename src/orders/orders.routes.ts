@@ -13,6 +13,10 @@ export async function ordersRoutes(fastify: FastifyInstance) {
       const id = Number(request.params.id);
       const { status } = request.body;
 
+      if (!Number.isInteger(id)) {
+        return reply.code(400).send({ error: `id inválido: ${request.params.id}` });
+      }
+
       if (!isValidStatus(status)) {
         return reply.code(400).send({ error: `status inválido: ${status}` });
       }
