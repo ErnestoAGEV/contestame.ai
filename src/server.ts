@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Fastify from 'fastify';
+import Fastify, { type FastifyError } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { socketPlugin } from './realtime-events/socket.js';
@@ -13,6 +13,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const fastify = Fastify({ logger: true });
 
+process.on('unhandledRejection', (err) => {
+  fastify.log.error(err, 'unhandledRejection');
+});
+
+process.on('uncaughtException', (err) => {
+  fastify.log.error(err, 'uncaughtException');
+  process.exit(1);
+});
+
 await fastify.register(fastifyWebsocket);
 await fastify.register(fastifyStatic, {
   root: path.join(__dirname, '..', 'public'),
@@ -23,9 +32,9 @@ await fastify.register(ordersRoutes);
 await fastify.register(twilioRoutes);
 await fastify.register(realtimeBridgeRoute);
 
-fastify.setErrorHandler((error, _request, reply) => {
+fastify.setErrorHandler((error: FastifyError, _request, reply) => {
   fastify.log.error(error);
-  reply.status(500).send({ error: 'internal server error' });
+  reply.status(error.statusCode ?? 500).send({ error: error.message ?? 'internal server error' });
 });
 
 const port = Number(process.env.PORT ?? 3000);
