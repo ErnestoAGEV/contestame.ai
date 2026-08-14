@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyError } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
+import fastifyFormbody from '@fastify/formbody';
 import { socketPlugin } from './realtime-events/socket.js';
 import { ordersRoutes } from './orders/orders.routes.js';
 import { twilioRoutes } from './voice/twilioRoutes.js';
@@ -23,6 +24,7 @@ process.on('uncaughtException', (err) => {
 });
 
 await fastify.register(fastifyWebsocket);
+await fastify.register(fastifyFormbody);
 await fastify.register(fastifyStatic, {
   root: path.join(__dirname, '..', 'public'),
   prefix: '/',
