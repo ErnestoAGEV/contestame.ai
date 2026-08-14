@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@fastify/formbody": "^9.0.0",
     "@fastify/static": "^10.1.3",
     "@fastify/websocket": "^11.3.0",
     "@prisma/client": "^6.19.3",
