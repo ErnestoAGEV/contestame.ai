@@ -11,6 +11,8 @@ cp .env.example .env
 npx prisma migrate dev
 ```
 
+> El servidor levanta sin problema aunque dejes estas credenciales vacías, pero una llamada real fallará (el que llama escucha una disculpa y se corta) si `OPENAI_API_KEY`, `TWILIO_ACCOUNT_SID` o `TWILIO_AUTH_TOKEN` no están bien configuradas — si tienes un colgado silencioso durante pruebas, revisa esto primero.
+
 ## Correr en desarrollo
 
 ```bash
@@ -28,6 +30,8 @@ npm test
 Esto empuja el esquema a una base de datos SQLite separada (`prisma/test.db`) antes de correr Vitest.
 
 ## Exponer el servidor local con ngrok y configurar Twilio
+
+Esta sección solo es necesaria para probar llamadas telefónicas reales; el dashboard y `/api/orders` funcionan sin ngrok ni Twilio en cuanto el servidor está corriendo.
 
 1. Instala [ngrok](https://ngrok.com/download) si no lo tienes.
 2. Con el servidor corriendo (`npm run dev`), en otra terminal:
