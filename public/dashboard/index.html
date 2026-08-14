@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tacos El Compa — Pedidos</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Tacos El Compa</h1>
+  </header>
+  <main class="board">
+    <section class="column" data-status="recibido">
+      <h2>Recibido</h2>
+      <div class="cards" id="cards-recibido"></div>
+    </section>
+    <section class="column" data-status="preparando">
+      <h2>Preparando</h2>
+      <div class="cards" id="cards-preparando"></div>
+    </section>
+    <section class="column" data-status="listo">
+      <h2>Listo</h2>
+      <div class="cards" id="cards-listo"></div>
+    </section>
+    <section class="column" data-status="completado">
+      <h2>Completado</h2>
+      <div class="cards" id="cards-completado"></div>
+    </section>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
