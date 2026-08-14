@@ -183,6 +183,8 @@ git commit -m "feat: add Prisma schema and client for Order/OrderItem"
 
 (`prisma/dev.db` and `prisma/test.db` are gitignored via the existing `*.db` rule.)
 
+**Deviation note (2026-08-13):** Task 1's `npm install prisma @prisma/client` pulled in `^7.x`, which dropped support for the classic `datasource { url = env("DATABASE_URL") }` syntax used above — Prisma 7 requires a driver-adapter model (`prisma.config.ts` + an adapter package like `@prisma/adapter-better-sqlite3`). That's unnecessary complexity for this MVP (native bindings, extra config surface), so `prisma`/`@prisma/client` were downgraded to `^6.x` in commit `5e24637`, keeping the schema and `src/lib/prisma.ts` exactly as originally written. If a future task needs a Prisma 7+ feature, revisit this decision deliberately rather than upgrading incidentally.
+
 ---
 
 ## Task 3: Vitest config and test database setup
@@ -200,7 +202,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     env: {
-      DATABASE_URL: 'file:./prisma/test.db',
+      DATABASE_URL: 'file:./test.db',
     },
   },
 });
@@ -214,7 +216,7 @@ import { execSync } from 'node:child_process';
 
 execSync('npx prisma db push --skip-generate', {
   stdio: 'inherit',
-  env: { ...process.env, DATABASE_URL: 'file:./prisma/test.db' },
+  env: { ...process.env, DATABASE_URL: 'file:./test.db' },
 });
 ```
 
