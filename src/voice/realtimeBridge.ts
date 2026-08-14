@@ -38,7 +38,13 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
     let callSid: string | null = null;
     let openaiSocket: WebSocket | null = null;
     let sessionReady = false;
+    // Intentional policy: only ONE reconnect attempt is ever made per call, and this
+    // flag is never reset back to false — a second drop in the same call ends it.
     let reconnectAttempted = false;
+    // Set at the start of cleanup() so async socket event handlers (close/error) fired
+    // as a side effect of an intentional shutdown know to no-op instead of reconnecting
+    // or hanging up a call that is already ending.
+    let shuttingDown = false;
 
     function connectToOpenAI() {
       const socket = new WebSocket(OPENAI_REALTIME_URL, {
@@ -59,6 +65,7 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
       });
 
       socket.on('close', () => {
+        if (shuttingDown) return;
         fastify.log.warn({ callSid, sessionReady }, 'OpenAI Realtime WS closed');
         if (sessionReady && !reconnectAttempted && callSid) {
           reconnectAttempted = true;
@@ -68,6 +75,7 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
         } else if (!sessionReady && callSid) {
           void hangupWithMessage(callSid, APOLOGY_MESSAGE).catch((hangupErr) => {
             fastify.log.error({ callSid, hangupErr }, 'failed to hang up call after OpenAI failure');
+            cleanup();
           });
         }
       });
@@ -75,7 +83,7 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
       openaiSocket = socket;
     }
 
-    function sendSessionUpdate() {
+    function sendSessionUpdate(isReconnect: boolean) {
       const session = callSid ? getSession(callSid) : undefined;
       const contextNote =
         session && session.items.length > 0
@@ -99,7 +107,9 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
           },
         })
       );
-      openaiSocket?.send(JSON.stringify({ type: 'response.create' }));
+      if (!isReconnect) {
+        openaiSocket?.send(JSON.stringify({ type: 'response.create' }));
+      }
     }
 
     function handleOpenAIMessage(raw: string) {
@@ -114,7 +124,7 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
       switch (event.type) {
         case 'session.created':
           sessionReady = true;
-          sendSessionUpdate();
+          sendSessionUpdate(reconnectAttempted);
           break;
         case 'response.audio.delta':
           if (streamSid) {
@@ -124,7 +134,9 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
           }
           break;
         case 'response.function_call_arguments.done':
-          void handleFunctionCall(event);
+          void handleFunctionCall(event).catch((err) => {
+            fastify.log.error({ callSid, err }, 'unhandled error in handleFunctionCall');
+          });
           break;
         case 'error':
           fastify.log.error({ callSid, event }, 'OpenAI Realtime error event');
@@ -139,25 +151,30 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
       const session = getSession(callSid);
       if (!session) return;
 
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(event.arguments || '{}');
-      } catch (err) {
-        fastify.log.error({ callSid, err }, 'failed to parse function call arguments');
-      }
-
       let result: ToolResult;
 
-      if (event.name === 'finalize_order') {
-        result = validateFinalize(session);
-        if (result.ok) {
-          const order = await createOrderFromSession(session);
-          fastify.emitOrderNew(order);
-          session.finalized = true;
+      try {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(event.arguments || '{}');
+        } catch (err) {
+          fastify.log.error({ callSid, err }, 'failed to parse function call arguments');
         }
-      } else {
-        const handler = toolHandlers[event.name];
-        result = handler ? handler(session, args) : { ok: false, reason: `función desconocida: ${event.name}` };
+
+        if (event.name === 'finalize_order') {
+          result = validateFinalize(session);
+          if (result.ok) {
+            const order = await createOrderFromSession(session);
+            fastify.emitOrderNew(order);
+            session.finalized = true;
+          }
+        } else {
+          const handler = toolHandlers[event.name];
+          result = handler ? handler(session, args) : { ok: false, reason: `función desconocida: ${event.name}` };
+        }
+      } catch (err) {
+        fastify.log.error({ callSid, err }, 'error handling function call');
+        result = { ok: false, reason: 'ocurrió un error interno, por favor intenta de nuevo' };
       }
 
       openaiSocket?.send(
@@ -174,11 +191,13 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
     }
 
     function cleanup() {
+      shuttingDown = true;
       if (openaiSocket && openaiSocket.readyState === WebSocket.OPEN) {
         openaiSocket.close();
       }
       if (callSid) {
         deleteSession(callSid);
+        callSid = null;
       }
     }
 
@@ -222,6 +241,7 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
 
     twilioSocket.on('error', (err) => {
       fastify.log.error({ callSid, err }, 'Twilio WS error');
+      cleanup();
     });
   });
 }
