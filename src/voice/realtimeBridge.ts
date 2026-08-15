@@ -72,6 +72,20 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
     // a response starts (e.g. call-setup noise) cancels a response before it ever plays,
     // leaving the conversation stuck with nothing audible having been said.
     let responseAudioStarted = false;
+    // Set true the moment a barge-in fires. OpenAI's interrupt_response stops it from
+    // generating MORE audio, but a few response.output_audio.delta chunks for the
+    // now-cancelled response can already be in flight over the WebSocket and arrive
+    // after we've told Twilio to clear its buffer — forwarding those would "revive"
+    // audio the caller had just interrupted, making it seem like the agent ignored
+    // the interruption. Once set, audio deltas are dropped until the NEXT
+    // response.created (a fresh response the caller hasn't interrupted).
+    let responseInterrupted = false;
+    // TEMP latency diagnostics (Task 16 live debugging) — remove once turn-taking speed
+    // is confirmed acceptable. Tracks when the caller stopped talking and when the
+    // response was created, so we can log real elapsed-ms instead of guessing from
+    // subjective "it feels slow" reports.
+    let speechStoppedAt: number | null = null;
+    let responseCreatedAt: number | null = null;
 
     function requestResponse() {
       if (responseActive) return;
@@ -142,10 +156,16 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
                   // interruptions feel slow to react.
                   interrupt_response: true,
                   create_response: true,
-                  // Lower than the 0.5 default: react to a quieter/faster voice onset
-                  // when the caller starts talking over the agent, at the cost of being
-                  // slightly more sensitive to background noise.
-                  threshold: 0.35,
+                  // Default threshold (0.5). Tried 0.35 to react faster to the caller's
+                  // voice onset, but it made the agent pause on ordinary background
+                  // noise — turn-taking latency was already fine without it (measured
+                  // ~1-9ms speech_stopped->response.created), so it's not worth the
+                  // false-positive tradeoff.
+                  threshold: 0.5,
+                  // Lower than the 500ms default: wait less trailing silence before
+                  // deciding the caller finished a turn, at the cost of being slightly
+                  // more likely to jump in on a brief mid-sentence pause.
+                  silence_duration_ms: 350,
                 },
               },
               output: {
@@ -180,14 +200,32 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
         case 'response.created':
           responseActive = true;
           responseAudioStarted = false;
+          responseInterrupted = false;
+          responseCreatedAt = Date.now();
+          if (speechStoppedAt !== null) {
+            fastify.log.info(
+              { callSid, ms: responseCreatedAt - speechStoppedAt },
+              'latency: speech_stopped -> response.created'
+            );
+          }
           break;
         case 'response.output_audio.delta':
+          if (responseInterrupted) break;
+          if (!responseAudioStarted && responseCreatedAt !== null) {
+            fastify.log.info(
+              { callSid, ms: Date.now() - responseCreatedAt },
+              'latency: response.created -> first audio delta'
+            );
+          }
           responseAudioStarted = true;
           if (streamSid) {
             twilioSocket.send(
               JSON.stringify({ event: 'media', streamSid, media: { payload: event.delta } })
             );
           }
+          break;
+        case 'input_audio_buffer.speech_stopped':
+          speechStoppedAt = Date.now();
           break;
         case 'input_audio_buffer.speech_started':
           // Caller started talking over the agent. `turn_detection.interrupt_response`
@@ -200,12 +238,14 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
           // (e.g. call-setup noise) doesn't clear a response that hasn't started yet.
           if (responseAudioStarted && streamSid) {
             fastify.log.info({ callSid }, 'barge-in: clearing Twilio audio buffer');
+            responseInterrupted = true;
             twilioSocket.send(JSON.stringify({ event: 'clear', streamSid }));
           }
           break;
         case 'response.done': {
           responseActive = false;
           responseAudioStarted = false;
+          responseInterrupted = false;
           const outputs = event.response?.output ?? [];
           for (const item of outputs) {
             if (item.type !== 'function_call') continue;
