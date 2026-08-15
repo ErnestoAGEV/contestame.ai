@@ -142,6 +142,10 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
                   // interruptions feel slow to react.
                   interrupt_response: true,
                   create_response: true,
+                  // Lower than the 0.5 default: react to a quieter/faster voice onset
+                  // when the caller starts talking over the agent, at the cost of being
+                  // slightly more sensitive to background noise.
+                  threshold: 0.35,
                 },
               },
               output: {
@@ -195,6 +199,7 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
           // responseAudioStarted so a VAD false-positive before anything has played
           // (e.g. call-setup noise) doesn't clear a response that hasn't started yet.
           if (responseAudioStarted && streamSid) {
+            fastify.log.info({ callSid }, 'barge-in: clearing Twilio audio buffer');
             twilioSocket.send(JSON.stringify({ event: 'clear', streamSid }));
           }
           break;
