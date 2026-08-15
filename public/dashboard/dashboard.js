@@ -32,8 +32,11 @@ function renderCard(order) {
     .join('');
 
   const typeLabel = order.type === 'delivery' ? 'Entrega a domicilio' : 'Para recoger';
-  const addressHtml =
-    order.type === 'delivery' && order.address ? `<p class="address">${escapeHtml(order.address)}</p>` : '';
+  const hasAddress = order.type === 'delivery' && order.address;
+  const addressHtml = hasAddress ? `<p class="address">${escapeHtml(order.address)}</p>` : '';
+  const mapHtml = hasAddress
+    ? `<iframe class="map-embed" src="https://maps.google.com/maps?q=${encodeURIComponent(order.address)}&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`
+    : '';
   const nextStatus = NEXT_STATUS[order.status];
 
   card.innerHTML = `
@@ -43,6 +46,7 @@ function renderCard(order) {
     </div>
     <span class="badge badge-${order.type}">${typeLabel}</span>
     ${addressHtml}
+    ${mapHtml}
     <ul class="items">${itemsHtml}</ul>
     ${nextStatus ? `<button class="advance-btn" data-id="${order.id}" data-next="${nextStatus}">Avanzar a ${nextStatus}</button>` : ''}
   `;
