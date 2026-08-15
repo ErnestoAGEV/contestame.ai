@@ -2,7 +2,6 @@ import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyError } from 'fastify';
-import fastifyWebsocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import fastifyFormbody from '@fastify/formbody';
 import { socketPlugin } from './realtime-events/socket.js';
@@ -23,7 +22,6 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-await fastify.register(fastifyWebsocket);
 await fastify.register(fastifyFormbody);
 await fastify.register(fastifyStatic, {
   root: path.join(__dirname, '..', 'public'),

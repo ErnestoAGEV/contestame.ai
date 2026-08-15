@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import '@fastify/websocket';
-import WebSocket from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import { createSession, getSession, deleteSession } from './callSession.js';
 import type { CallSession } from './callSession.js';
 import {
@@ -17,8 +16,9 @@ import { buildSystemPrompt } from '../config/restaurant.js';
 import { createOrderFromSession } from '../orders/orders.service.js';
 import { hangupWithMessage } from './twilioCallControl.js';
 
-const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview';
-const REALTIME_VOICE = 'alloy';
+const OPENAI_REALTIME_MODEL = 'gpt-realtime-2.1';
+const OPENAI_REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${OPENAI_REALTIME_MODEL}`;
+const REALTIME_VOICE = 'marin';
 const APOLOGY_MESSAGE =
   'Lo sentimos, estamos teniendo problemas técnicos, por favor intenta más tarde.';
 
@@ -33,7 +33,24 @@ const toolHandlers: Record<string, ToolHandler> = {
 };
 
 export async function realtimeBridgeRoute(fastify: FastifyInstance) {
-  fastify.get('/media-stream', { websocket: true }, (twilioSocket) => {
+  // Plain `ws` server in noServer mode, dispatched manually below — NOT
+  // @fastify/websocket, which attaches a blanket 'upgrade' listener that intercepts
+  // every WebSocket upgrade on the shared HTTP server (including socket.io's own
+  // /socket.io/ handshake), crashing the process with "handleUpgrade() was called
+  // more than once with the same socket" as soon as a dashboard client connects.
+  // Handling /media-stream's upgrade ourselves, scoped to its exact path, lets
+  // socket.io's upgrade listener (registered by socketPlugin) handle its own path
+  // without interference.
+  const wss = new WebSocketServer({ noServer: true });
+
+  fastify.server.on('upgrade', (request, socket, head) => {
+    if (request.url !== '/media-stream') return;
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  });
+
+  wss.on('connection', (twilioSocket) => {
     let streamSid: string | null = null;
     let callSid: string | null = null;
     let openaiSocket: WebSocket | null = null;
@@ -45,12 +62,26 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
     // as a side effect of an intentional shutdown know to no-op instead of reconnecting
     // or hanging up a call that is already ending.
     let shuttingDown = false;
+    // True between a response.created and its matching response.done. Guards manual
+    // response.create calls (greeting, post-tool-call) so we never ask OpenAI to start
+    // a second response while one is still in flight (conversation_already_has_active_response).
+    let responseActive = false;
+    // True once we've actually forwarded at least one audio chunk of the current response
+    // to Twilio. Barge-in (speech_started) should only cancel/clear when the caller is
+    // interrupting audio they can actually hear — otherwise a VAD false-positive right as
+    // a response starts (e.g. call-setup noise) cancels a response before it ever plays,
+    // leaving the conversation stuck with nothing audible having been said.
+    let responseAudioStarted = false;
+
+    function requestResponse() {
+      if (responseActive) return;
+      openaiSocket?.send(JSON.stringify({ type: 'response.create' }));
+    }
 
     function connectToOpenAI() {
       const socket = new WebSocket(OPENAI_REALTIME_URL, {
         headers: {
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          'OpenAI-Beta': 'realtime=v1',
         },
       });
 
@@ -96,19 +127,27 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
         JSON.stringify({
           type: 'session.update',
           session: {
-            modalities: ['audio', 'text'],
+            type: 'realtime',
+            model: OPENAI_REALTIME_MODEL,
             instructions: buildSystemPrompt() + contextNote,
-            voice: REALTIME_VOICE,
-            input_audio_format: 'g711_ulaw',
-            output_audio_format: 'g711_ulaw',
-            turn_detection: { type: 'server_vad' },
+            output_modalities: ['audio'],
+            audio: {
+              input: {
+                format: { type: 'audio/pcmu' },
+                turn_detection: { type: 'server_vad' },
+              },
+              output: {
+                format: { type: 'audio/pcmu' },
+                voice: REALTIME_VOICE,
+              },
+            },
             tools: toolDefinitions,
             tool_choice: 'auto',
           },
         })
       );
       if (!isReconnect) {
-        openaiSocket?.send(JSON.stringify({ type: 'response.create' }));
+        requestResponse();
       }
     }
 
@@ -126,19 +165,62 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
           sessionReady = true;
           sendSessionUpdate(reconnectAttempted);
           break;
-        case 'response.audio.delta':
+        case 'response.created':
+          responseActive = true;
+          responseAudioStarted = false;
+          break;
+        case 'response.output_audio.delta':
+          responseAudioStarted = true;
           if (streamSid) {
             twilioSocket.send(
               JSON.stringify({ event: 'media', streamSid, media: { payload: event.delta } })
             );
           }
           break;
-        case 'response.function_call_arguments.done':
-          void handleFunctionCall(event).catch((err) => {
-            fastify.log.error({ callSid, err }, 'unhandled error in handleFunctionCall');
-          });
+        case 'input_audio_buffer.speech_started':
+          // Caller started talking over the agent: stop OpenAI from generating more of
+          // the current response, and flush whatever audio Twilio has already buffered —
+          // but only if the caller could actually have heard something. A VAD
+          // false-positive firing before any audio has played (e.g. call-setup noise)
+          // must not cancel a response that hasn't started yet.
+          if (responseActive && responseAudioStarted) {
+            openaiSocket?.send(JSON.stringify({ type: 'response.cancel' }));
+            if (streamSid) {
+              twilioSocket.send(JSON.stringify({ event: 'clear', streamSid }));
+            }
+          }
           break;
+        case 'response.done': {
+          responseActive = false;
+          responseAudioStarted = false;
+          const outputs = event.response?.output ?? [];
+          for (const item of outputs) {
+            if (item.type !== 'function_call') continue;
+            void handleFunctionCall(item).catch((err) => {
+              fastify.log.error({ callSid, err }, 'unhandled error in handleFunctionCall');
+            });
+          }
+          break;
+        }
         case 'error':
+          // Benign race: we asked to cancel a response that had already finished
+          // server-side (e.g. speech_started arrived just after response.done). Not a
+          // real failure — the Twilio-side audio buffer clear already handles the
+          // actual interruption, this is just OpenAI confirming there was nothing left
+          // to cancel.
+          if (event.error?.code === 'response_cancel_not_active') {
+            fastify.log.info({ callSid }, 'response.cancel raced with response.done (harmless)');
+            break;
+          }
+          // Benign race: server_vad auto-creates a response as soon as it detects the
+          // caller stopped talking, which can land just before our own manual
+          // response.create (e.g. right after sending a function_call_output). OpenAI
+          // rejects the redundant request; the response already in flight continues
+          // normally, so there's nothing to recover here.
+          if (event.error?.code === 'conversation_already_has_active_response') {
+            fastify.log.info({ callSid }, 'response.create raced with server-driven response (harmless)');
+            break;
+          }
           fastify.log.error({ callSid, event }, 'OpenAI Realtime error event');
           break;
         default:
@@ -187,7 +269,7 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
           },
         })
       );
-      openaiSocket?.send(JSON.stringify({ type: 'response.create' }));
+      requestResponse();
     }
 
     function cleanup() {
