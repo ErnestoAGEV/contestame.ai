@@ -134,7 +134,15 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
             audio: {
               input: {
                 format: { type: 'audio/pcmu' },
-                turn_detection: { type: 'server_vad' },
+                turn_detection: {
+                  type: 'server_vad',
+                  // Let OpenAI truncate/cancel the in-flight response itself the
+                  // instant it detects speech, instead of us round-tripping a manual
+                  // response.cancel — that round trip is exactly what made
+                  // interruptions feel slow to react.
+                  interrupt_response: true,
+                  create_response: true,
+                },
               },
               output: {
                 format: { type: 'audio/pcmu' },
@@ -178,16 +186,16 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
           }
           break;
         case 'input_audio_buffer.speech_started':
-          // Caller started talking over the agent: stop OpenAI from generating more of
-          // the current response, and flush whatever audio Twilio has already buffered —
-          // but only if the caller could actually have heard something. A VAD
-          // false-positive firing before any audio has played (e.g. call-setup noise)
-          // must not cancel a response that hasn't started yet.
-          if (responseActive && responseAudioStarted) {
-            openaiSocket?.send(JSON.stringify({ type: 'response.cancel' }));
-            if (streamSid) {
-              twilioSocket.send(JSON.stringify({ event: 'clear', streamSid }));
-            }
+          // Caller started talking over the agent. `turn_detection.interrupt_response`
+          // (set in sendSessionUpdate) tells OpenAI to cancel/truncate the response
+          // itself the instant it detects speech — faster than us round-tripping a
+          // manual response.cancel and waiting for confirmation. All we still need to
+          // do client-side is flush whatever audio Twilio already has buffered, so
+          // playback actually stops instead of continuing from the buffer. Gated on
+          // responseAudioStarted so a VAD false-positive before anything has played
+          // (e.g. call-setup noise) doesn't clear a response that hasn't started yet.
+          if (responseAudioStarted && streamSid) {
+            twilioSocket.send(JSON.stringify({ event: 'clear', streamSid }));
           }
           break;
         case 'response.done': {
@@ -203,15 +211,6 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
           break;
         }
         case 'error':
-          // Benign race: we asked to cancel a response that had already finished
-          // server-side (e.g. speech_started arrived just after response.done). Not a
-          // real failure — the Twilio-side audio buffer clear already handles the
-          // actual interruption, this is just OpenAI confirming there was nothing left
-          // to cancel.
-          if (event.error?.code === 'response_cancel_not_active') {
-            fastify.log.info({ callSid }, 'response.cancel raced with response.done (harmless)');
-            break;
-          }
           // Benign race: server_vad auto-creates a response as soon as it detects the
           // caller stopped talking, which can land just before our own manual
           // response.create (e.g. right after sending a function_call_output). OpenAI
