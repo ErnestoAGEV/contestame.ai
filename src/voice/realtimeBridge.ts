@@ -80,6 +80,14 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
     // the interruption. Once set, audio deltas are dropped until the NEXT
     // response.created (a fresh response the caller hasn't interrupted).
     let responseInterrupted = false;
+    // Set when a response finishes (response.done). Twilio still plays out whatever
+    // audio it already received for a trailing stretch after that (RTP/jitter-buffer
+    // delay on the phone network) — the caller can be genuinely talking over audio
+    // they're still hearing even though our side already considers the turn "done".
+    // A speech_started shortly after this timestamp still gets a Twilio clear, even
+    // though there's no OpenAI response left to cancel.
+    let lastResponseEndedAt: number | null = null;
+    const TRAILING_AUDIO_GRACE_MS = 800;
     // TEMP latency diagnostics (Task 16 live debugging) — remove once turn-taking speed
     // is confirmed acceptable. Tracks when the caller stopped talking and when the
     // response was created, so we can log real elapsed-ms instead of guessing from
@@ -166,6 +174,12 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
                   // deciding the caller finished a turn, at the cost of being slightly
                   // more likely to jump in on a brief mid-sentence pause.
                   silence_duration_ms: 350,
+                  // Tried prefix_padding_ms: 500 (default 300) to reduce clipped
+                  // leading words on interruption. Reverted: the very next live call
+                  // after adding it had zero speech_started/speech_stopped events for
+                  // ~32s after the greeting (caller's reply never registered at all,
+                  // no error event either) — not confirmed as the cause, but reverting
+                  // to isolate the variable before trying it again.
                 },
               },
               output: {
@@ -240,12 +254,24 @@ export async function realtimeBridgeRoute(fastify: FastifyInstance) {
             fastify.log.info({ callSid }, 'barge-in: clearing Twilio audio buffer');
             responseInterrupted = true;
             twilioSocket.send(JSON.stringify({ event: 'clear', streamSid }));
+          } else if (
+            !responseActive &&
+            lastResponseEndedAt !== null &&
+            Date.now() - lastResponseEndedAt < TRAILING_AUDIO_GRACE_MS &&
+            streamSid
+          ) {
+            // No OpenAI response to cancel, but the phone may still be playing out
+            // trailing audio from the one that just ended (network/jitter-buffer
+            // delay) — clear it so the caller doesn't keep hearing it while talking.
+            fastify.log.info({ callSid }, 'barge-in: clearing trailing audio after recent response.done');
+            twilioSocket.send(JSON.stringify({ event: 'clear', streamSid }));
           }
           break;
         case 'response.done': {
           responseActive = false;
           responseAudioStarted = false;
           responseInterrupted = false;
+          lastResponseEndedAt = Date.now();
           const outputs = event.response?.output ?? [];
           for (const item of outputs) {
             if (item.type !== 'function_call') continue;
