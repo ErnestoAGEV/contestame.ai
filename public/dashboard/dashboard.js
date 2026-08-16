@@ -32,8 +32,13 @@ function renderCard(order) {
     .join('');
 
   const typeLabel = order.type === 'delivery' ? 'Entrega a domicilio' : 'Para recoger';
-  const addressHtml =
-    order.type === 'delivery' && order.address ? `<p class="address">${escapeHtml(order.address)}</p>` : '';
+  const hasAddress = order.type === 'delivery' && order.address;
+  const mapUrl = hasAddress
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.address)}`
+    : '';
+  const addressHtml = hasAddress
+    ? `<p class="address">${escapeHtml(order.address)} <a class="map-link" href="${mapUrl}" target="_blank" rel="noopener">Ver ubicación</a></p>`
+    : '';
   const nextStatus = NEXT_STATUS[order.status];
 
   card.innerHTML = `
