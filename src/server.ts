@@ -8,6 +8,7 @@ import { socketPlugin } from './realtime-events/socket.js';
 import { ordersRoutes } from './orders/orders.routes.js';
 import { twilioRoutes } from './voice/twilioRoutes.js';
 import { realtimeBridgeRoute } from './voice/realtimeBridge.js';
+import { toolWebhookRoutes } from './voice/toolWebhooks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -29,6 +30,11 @@ await fastify.register(fastifyStatic, {
 });
 await fastify.register(socketPlugin);
 await fastify.register(ordersRoutes);
+await fastify.register(toolWebhookRoutes);
+// twilioRoutes + realtimeBridgeRoute are the old OpenAI-Realtime voice path. Kept
+// registered but dormant during the ElevenLabs migration (the Twilio number now
+// points at ElevenLabs, so /voice + /media-stream no longer receive traffic).
+// Removed in the Stage 2 cleanup once ElevenLabs is fully validated.
 await fastify.register(twilioRoutes);
 await fastify.register(realtimeBridgeRoute);
 
